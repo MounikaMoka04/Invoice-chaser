@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice Chaser</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1c2430; --mute:#667085; --line:#e4e7ec; --brand:#2563eb;
+          --good:#15803d; --warn:#b45309; --bad:#b91c1c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:var(--card); border-bottom:1px solid var(--line); padding:14px 24px; display:flex; align-items:center; gap:16px; }
+  header h1 { font-size:18px; margin:0; flex:1; }
+  main { max-width:1100px; margin:24px auto; padding:0 16px; display:grid; gap:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:18px; }
+  .card h2 { font-size:15px; margin:0 0 12px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .tile .label { color:var(--mute); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  .tile .value { font-size:24px; font-weight:650; margin-top:4px; }
+  .tile.accent { border-color:var(--brand); background:#eff4ff; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--mute); font-size:12px; font-weight:600; text-transform:uppercase; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); border-radius:8px; padding:6px 12px; }
+  button.primary { background:var(--brand); color:#fff; border-color:var(--brand); }
+  button.small { padding:3px 8px; font-size:13px; margin-right:4px; }
+  input, select { font:inherit; padding:7px 10px; border:1px solid var(--line); border-radius:8px; width:100%; }
+  form { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; align-items:end; }
+  label { font-size:12px; color:var(--mute); display:block; margin-bottom:3px; }
+  .badge { display:inline-block; padding:2px 9px; border-radius:999px; font-size:12px; font-weight:600; background:#eef2f6; }
+  .badge.overdue,.badge.disputed { background:#fee4e2; color:var(--bad); }
+  .badge.paid { background:#dcfae6; color:var(--good); }
+  .badge.paused { background:#fef0c7; color:var(--warn); }
+  .badge.pending { background:#e0eaff; color:var(--brand); }
+  .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  @media (max-width:800px) { .grid2 { grid-template-columns:1fr; } }
+  .mute { color:var(--mute); font-size:13px; }
+  .msg { border-radius:10px; padding:8px 12px; margin:6px 0; max-width:85%; white-space:pre-wrap; }
+  .msg.out { background:#e0eaff; margin-left:auto; } .msg.in { background:#f2f4f7; }
+  .msg small { display:block; color:var(--mute); }
+  #auth { max-width:380px; margin:60px auto; }
+  .hidden { display:none !important; }
+  #toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#1c2430; color:#fff;
+           padding:10px 16px; border-radius:10px; opacity:0; transition:opacity .2s; pointer-events:none; }
+  #toast.show { opacity:1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Invoice Chaser</h1>
+  <span id="who" class="mute"></span>
+  <button id="logout" class="hidden">Log out</button>
+</header>
+
+<div id="auth" class="card hidden">
+  <h2 id="auth-title">Log in</h2>
+  <form id="auth-form" style="grid-template-columns:1fr">
+    <div class="reg hidden"><label>Your name</label><input name="name"></div>
+    <div class="reg hidden"><label>Business name</label><input name="business_name"></div>
+    <div><label>Email</label><input name="email" type="email" required></div>
+    <div><label>Password</label><input name="password" type="password" required minlength="6"></div>
+    <button class="primary">Continue</button>
+  </form>
+  <p class="mute"><a href="#" id="switch">Create an account</a></p>
+</div>
+
+<main id="app" class="hidden">
+  <section class="tiles" id="tiles"></section>
+
+  <div class="grid2">
+    <section class="card"><h2>Needs your attention</h2><div id="attention" class="mute">Nothing right now.</div></section>
+    <section class="card"><h2>Drafts waiting for approval</h2><div id="drafts" class="mute">None.</div>
+      <p class="mute"><label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="approval" style="width:auto">
+      Ask me to approve each reminder before it is sent</label></p></section>
+  </div>
+
+  <section class="card">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <h2 style="margin:0;flex:1">Invoices</h2>
+      <select id="filter" style="width:auto"><option value="">All</option><option>pending</option><option>overdue</option>
+        <option>paused</option><option>disputed</option><option>paid</option></select>
+      <button id="run" class="primary" title="Runs today's follow-up cycle now">Run follow-ups now</button>
+    </div>
+    <table><thead><tr><th>Invoice</th><th>Client</th><th>Amount</th><th>Due</th><th>Status</th><th>Reminders</th><th>Next</th><th></th></tr></thead>
+    <tbody id="rows"></tbody></table>
+    <p class="mute" id="empty">No invoices yet. Add a client, then an invoice below.</p>
+  </section>
+
+  <section class="card hidden" id="detail"><h2 id="detail-title"></h2><div id="detail-body"></div></section>
+
+  <div class="grid2">
+    <section class="card"><h2>Add client</h2>
+      <form id="client-form">
+        <div><label>Name</label><input name="name" required></div>
+        <div><label>WhatsApp number</label><input name="whatsapp_number" placeholder="98765 43210" required></div>
+        <div><label>Tone</label><select name="preferred_tone"><option>neutral</option><option>friendly</option><option>formal</option></select></div>
+        <button class="primary">Add</button>
+      </form></section>
+    <section class="card"><h2>Add invoice</h2>
+      <form id="invoice-form">
+        <div><label>Client</label><select name="client_id" id="client-select" required></select></div>
+        <div><label>Invoice no.</label><input name="invoice_number" required></div>
+        <div><label>Amount (₹)</label><input name="amount" type="number" min="1" step="0.01" required></div>
+        <div><label>Issue date</label><input name="issue_date" type="date" required></div>
+        <div><label>Due date</label><input name="due_date" type="date" required></div>
+        <div><label>Payment link</label><input name="payment_link" placeholder="https://..."></div>
+        <button class="primary">Add</button>
+      </form>
+      <p class="mute">Or import many: <input type="file" id="csv" accept=".csv" style="width:auto"></p></section>
+  </div>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const inr = (n) => '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let token = localStorage.getItem('token'), registering = false;
+
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2800); }
+
+async function api(path, opts = {}) {
+  const headers = { ...(opts.headers || {}) };
+  if (token) headers.Authorization = 'Bearer ' + token;
+  if (opts.json) { headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.json); }
+  const res = await fetch(path, { ...opts, headers });
+  if (res.status === 401 && token) { logout(); throw new Error('Please log in again'); }
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const d = await res.json(); detail = typeof d.detail === 'string' ? d.detail : JSON.stringify(d.detail); } catch {}
+    throw new Error(detail);
+  }
+  return res.status === 204 ? null : res.json();
+}
+const guard = (fn) => async (...a) => { try { await fn(...a); } catch (e) { toast(e.message); } };
+
+// ---- auth ----
+function showAuth() { $('#auth').classList.remove('hidden'); $('#app').classList.add('hidden'); $('#logout').classList.add('hidden'); }
+function logout() { token = null; localStorage.removeItem('token'); $('#who').textContent = ''; showAuth(); }
+$('#logout').onclick = logout;
+$('#switch').onclick = (e) => {
+  e.preventDefault(); registering = !registering;
+  document.querySelectorAll('.reg').forEach(el => el.classList.toggle('hidden', !registering));
+  $('#auth-title').textContent = registering ? 'Create account' : 'Log in';
+  $('#switch').textContent = registering ? 'I already have an account' : 'Create an account';
+};
+$('#auth-form').onsubmit = guard(async (e) => {
+  e.preventDefault();
+  const f = Object.fromEntries(new FormData(e.target));
+  if (registering) await api('/auth/register', { method: 'POST', json: { name: f.name || 'Me', email: f.email, password: f.password, business_name: f.business_name || '' } });
+  const body = new URLSearchParams({ username: f.email, password: f.password });
+  const t = await api('/auth/login', { method: 'POST', body });
+  token = t.access_token; localStorage.setItem('token', token);
+  await start();
+});
+
+// ---- data ----
+async function start() {
+  const me = await api('/auth/me');
+  $('#who').textContent = me.business_name || me.name;
+  $('#approval').checked = me.require_approval;
+  $('#auth').classList.add('hidden'); $('#app').classList.remove('hidden'); $('#logout').classList.remove('hidden');
+  await refresh();
+}
+
+async function refresh() {
+  const [s, invoices, clients, drafts] = await Promise.all([
+    api('/dashboard/summary'),
+    api('/invoices' + ($('#filter').value ? '?status=' + $('#filter').value : '')),
+    api('/clients'),
+    api('/messages/pending'),
+  ]);
+  const tile = (label, value, accent) => `<div class="tile ${accent ? 'accent' : ''}"><div class="label">${label}</div><div class="value">${value}</div></div>`;
+  $('#tiles').innerHTML =
+    tile('Recovered', inr(s.recovered_amount), true) + tile('Outstanding', inr(s.outstanding_amount)) +
+    tile('Overdue', inr(s.overdue_amount)) +
+    tile('Recovery rate', s.recovery_rate == null ? '–' : Math.round(s.recovery_rate * 100) + '%') +
+    tile('Avg days to pay', s.avg_days_to_payment_after_first_reminder ?? '–') +
+    tile('Reminders (30d)', s.reminders_sent_30d);
+
+  $('#attention').innerHTML = s.needs_attention.length ? s.needs_attention.map(i =>
+    `<p><b>${esc(i.invoice_number)}</b> · ${esc(i.client_name)} · ${inr(i.amount)}<br><span class="mute">${esc(i.note || i.status)}</span>
+     <br><button class="small" onclick="act(${i.id},'mark_paid')">Mark paid</button>
+     <button class="small" onclick="act(${i.id},'clear_review')">Dismiss</button>
+     <button class="small" onclick="act(${i.id},'resume')">Resume reminders</button></p>`).join('') : 'Nothing right now.';
+
+  $('#drafts').innerHTML = drafts.length ? drafts.map(m =>
+    `<div class="msg out">${esc(m.body)}<small>${esc(m.tone)} · reminder ${m.stage}</small>
+     <button class="small" onclick="decide(${m.id},'approve')">Approve &amp; send</button>
+     <button class="small" onclick="decide(${m.id},'reject')">Reject</button></div>`).join('') : 'None.';
+
+  $('#rows').innerHTML = invoices.map(i => `<tr>
+    <td><a href="#" onclick="show(${i.id});return false">${esc(i.invoice_number)}</a></td><td>${esc(i.client_name)}</td>
+    <td>${inr(i.amount)}</td><td>${i.due_date}</td><td><span class="badge ${i.status}">${i.status}</span></td>
+    <td>${i.reminder_count}</td><td>${i.next_reminder_on ?? '–'}</td>
+    <td>${i.status !== 'paid' ? `<button class="small" onclick="remind(${i.id})">Remind now</button>
+      <button class="small" onclick="act(${i.id},'mark_paid')">Paid</button>
+      <button class="small" onclick="act(${i.id},'${i.status === 'paused' ? 'resume' : 'pause'}')">${i.status === 'paused' ? 'Resume' : 'Pause'}</button>` : ''}</td></tr>`).join('');
+  $('#empty').classList.toggle('hidden', invoices.length > 0);
+  $('#client-select').innerHTML = clients.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+}
+
+window.act = guard(async (id, action) => { await api('/invoices/' + id, { method: 'PATCH', json: { action } }); await refresh(); });
+window.remind = guard(async (id) => { const r = await api(`/invoices/${id}/remind`, { method: 'POST' }); toast(r.outcome + (r.reason ? ': ' + r.reason : '')); await refresh(); });
+window.decide = guard(async (id, what) => { await api(`/messages/${id}/${what}`, { method: 'POST' }); await refresh(); });
+window.show = guard(async (id) => {
+  const d = await api('/invoices/' + id);
+  $('#detail').classList.remove('hidden');
+  $('#detail-title').textContent = `${d.invoice_number} · ${d.client_name} · ${inr(d.amount)}`;
+  $('#detail-body').innerHTML = d.messages.length ? d.messages.map(m =>
+    `<div class="msg ${m.direction}">${esc(m.body)}<small>${new Date(m.created_at).toLocaleString()} · ${esc(m.kind)} · ${esc(m.status)}${m.intent ? ' · ' + esc(m.intent) : ''}</small></div>`).join('')
+    : '<p class="mute">No messages yet.</p>';
+  $('#detail').scrollIntoView({ behavior: 'smooth' });
+});
+
+$('#filter').onchange = guard(refresh);
+$('#run').onclick = guard(async () => { const r = await api('/agent/run', { method: 'POST' }); toast(`Checked ${r.checked}: ` + (JSON.stringify(r.outcomes) || '{}')); await refresh(); });
+$('#approval').onchange = guard(async (e) => { await api('/auth/me', { method: 'PATCH', json: { require_approval: e.target.checked } }); toast('Saved'); });
+$('#client-form').onsubmit = guard(async (e) => { e.preventDefault(); await api('/clients', { method: 'POST', json: Object.fromEntries(new FormData(e.target)) }); e.target.reset(); await refresh(); toast('Client added'); });
+$('#invoice-form').onsubmit = guard(async (e) => {
+  e.preventDefault(); const f = Object.fromEntries(new FormData(e.target));
+  f.client_id = Number(f.client_id); f.amount = Number(f.amount);
+  await api('/invoices', { method: 'POST', json: f }); e.target.reset(); await refresh(); toast('Invoice added');
+});
+$('#csv').onchange = guard(async (e) => {
+  const body = new FormData(); body.append('file', e.target.files[0]);
+  const r = await api('/invoices/import', { method: 'POST', body }); e.target.value = '';
+  toast(`Imported ${r.created}, skipped ${r.skipped}, errors ${r.errors.length}`); await refresh();
+});
+
+if (token) start().catch(logout); else showAuth();
+</script>
+</body>
+</html>
